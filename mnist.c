@@ -4,12 +4,12 @@
 #include <math.h>
 
 // Hyperparameters
-#define NUM_EXAMPLES 8
+#define NUM_EXAMPLES 20
 #define NUM_LAYERS 4
-#define NUM_INPUTS 3
-#define NUM_OUTPUTS 2
-const size_t layers[NUM_LAYERS] = {NUM_INPUTS, 4, 4, NUM_OUTPUTS};
-#define LEARNING_RATE 10.0
+#define NUM_INPUTS 784
+#define NUM_OUTPUTS 10
+const size_t layers[NUM_LAYERS] = {NUM_INPUTS, 128, 54, NUM_OUTPUTS};
+#define LEARNING_RATE 0.1
 #define NUM_EPOCHS 1000
 
 /* ------------------- Helper Functions ------------------- */
@@ -24,10 +24,10 @@ void initWeightsXavier(double *weights, size_t numWeights, size_t fanIn, size_t 
 }
 
 // Print an error to the console then exit
-void error(char* string)
+void error(const char* string)
 {
 	printf("ERROR: %s\n", string);
-	exit(-1);
+	exit(EXIT_FAILURE);
 }
 
 // Adjust Weights/Biases according to the gradient
@@ -74,42 +74,27 @@ int main()
 	}
 
 	// Read Training Images
-	uint8_t image1[784] = {0};
-	fseek(trainingImages, 16, SEEK_SET);
-	fread(image1, 1, 784, trainingImages);
-	uint8_t image1Label;
-	fseek(trainingLabels, 8, SEEK_SET);
-	fread(&image1Label, 1, 1, trainingLabels);
+	uint8_t image[784] = {0};
+	uint8_t imageLabel;
+	double trainingInputs[NUM_EXAMPLES][NUM_INPUTS] = {0.0};
+	double trainingOutputs[NUM_EXAMPLES][NUM_OUTPUTS] = {0.0};
+	for (size_t example = 0; example < NUM_EXAMPLES; example++) {
+		fseek(trainingImages, 16 + 784*example, SEEK_SET);
+		fread(image, 1, 784, trainingImages);
+		fseek(trainingLabels, 8 + example, SEEK_SET);
+		fread(&imageLabel, 1, 1, trainingLabels);
+
+		for (size_t i = 0; i < 784; i++) {
+			trainingInputs[example][i] = (double)image[i]/256.0;
+		}
+		trainingOutputs[example][imageLabel] = 1.0;
+	}
 
 	// Close Files
 	fclose(trainingImages);
 	fclose(trainingLabels);
 	fclose(testImages);
 	fclose(testLabels);
-
-	// Temporary training data
-	double trainingInputs[NUM_EXAMPLES][NUM_INPUTS] = {
-		// A,   B,   C
-		{0.0, 0.0, 0.0},
-		{0.0, 0.0, 1.0},
-		{0.0, 1.0, 0.0},
-		{0.0, 1.0, 1.0},
-		{1.0, 0.0, 0.0},
-		{1.0, 0.0, 1.0},
-		{1.0, 1.0, 0.0},
-		{1.0, 1.0, 1.0},
-	};
-	double trainingOutputs[NUM_EXAMPLES][NUM_OUTPUTS] = {
-		// C,   S
-		{0.0, 0.0},
-		{0.0, 1.0},
-		{0.0, 1.0},
-		{1.0, 0.0},
-		{0.0, 1.0},
-		{1.0, 0.0},
-		{1.0, 0.0},
-		{1.0, 1.0},
-	};
 
 	// Activations and Activation Gradients
 	double **activations = malloc(NUM_LAYERS*sizeof(*activations));
@@ -203,9 +188,9 @@ int main()
 					if (layer == NUM_LAYERS-1) {
 						double activation = activations[layer][neuron];
 						double goal = trainingOutputs[exampleNum][neuron];
-						double error = activation - goal;
-						dCdA = 2.0*error;
-						cost += error*error;
+						double diff = activation - goal;
+						dCdA = 2.0*diff;
+						cost += diff*diff;
 					} else {
 						dCdA = 0.0;
 						size_t numConnections = layers[layer+1];
@@ -246,6 +231,12 @@ int main()
 
 		printf("Epoch #%zu | cost = %f\n", epoch, cost);
 		printf("-------------------------------------------------\n");
+	}
+
+	// Print Results
+	printf("Label: %d\n", imageLabel);
+	for (size_t i = 0; i < NUM_OUTPUTS; i++) {
+		printf("%d: %f\n", i, activations[NUM_LAYERS-1][i]);
 	}
 
 	// Free Activation and Activation Gradient Arrays
