@@ -10,9 +10,9 @@
 #define NUM_LAYERS 4
 #define NUM_INPUTS 784
 #define NUM_OUTPUTS 10
-const size_t layers[NUM_LAYERS] = {NUM_INPUTS, 128, 54, NUM_OUTPUTS};
-#define LEARNING_RATE 0.1
-#define NUM_EPOCHS 30
+const size_t layers[NUM_LAYERS] = {NUM_INPUTS, 128, 64, NUM_OUTPUTS};
+#define LEARNING_RATE 0.05
+#define NUM_EPOCHS 2
 
 /* ------------------- Helper Functions ------------------- */
 
@@ -192,6 +192,7 @@ int main()
 		}
 
 		double cost = 0.0;
+		uint32_t numCorrect = 0;
 
 		// Iterate through training examples
 		for (size_t exampleNum = 0; exampleNum < BATCH_SIZE; exampleNum++) {
@@ -211,6 +212,25 @@ int main()
 					activations[layer + 1][neuron] = activation;
 				}
 			}
+
+			// Calculate Accuracy
+			uint32_t correctNum = 0;
+			uint32_t predictedNum = 0;
+			double maxConfidence = 0.0;
+			for (size_t i = 0; i < NUM_OUTPUTS; i++) {
+				if (trainingOutputs[imageIndex][i] == 1.0) {
+					correctNum = i;
+					break;
+				}
+			}
+			for (size_t i = 0; i < NUM_OUTPUTS; i++) {
+				double confidence = activations[NUM_LAYERS-1][i];
+				if (confidence > maxConfidence) {
+					maxConfidence = confidence;
+					predictedNum = i;
+				}
+			}
+			if (predictedNum == correctNum) numCorrect++;
 
 			// Calculate Cost Gradient (Backpropagation)
 			for (size_t layer = NUM_LAYERS-1; layer > 0; layer--) {
@@ -262,7 +282,8 @@ int main()
 			}
 		}
 
-		printf("Batch #%zu | cost = %f\n", batch, cost);
+		double accuracy = (double)numCorrect/BATCH_SIZE*100.0;
+		printf("Batch #%zu | Cost = %f | Accuracy = %.3f%%\n", batch, cost, accuracy);
 		printf("-------------------------------------------------\n");
 	}
 	printf("+++++++++++++++++++++++++++++++++++++++++++++++++\n");
@@ -271,11 +292,33 @@ int main()
 	printf("-------------------------------------------------\n");
 	}
 
-	// Print Results
-	size_t imageIndex = imageIndices[59999];
-	for (size_t i = 0; i < NUM_OUTPUTS; i++) {
-		printf("%d: %f, %f\n", i, activations[NUM_LAYERS-1][i], trainingOutputs[imageIndex][i]);
+	// Output Neural Network to File
+	FILE *outputFile = fopen("mnist.nn", "wb");
+	if (outputFile == NULL) error("Could not create output file");
+	uint8_t numLayers = NUM_LAYERS;
+	fwrite(&numLayers, sizeof(numLayers), 1, outputFile);
+
+	// Header
+	for (size_t layer = 0; layer < NUM_LAYERS; layer++) {
+		uint16_t numNeurons = (uint16_t)layers[layer];
+		fwrite(&numNeurons, sizeof(numNeurons), 1, outputFile);
 	}
+
+	// Biases
+	for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {
+		size_t numNeurons = layers[layer + 1];
+		fwrite(biases[layer], sizeof(double), numNeurons, outputFile);
+	}
+
+	// Weights
+	for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {
+		size_t numNeurons = layers[layer + 1];
+		size_t numWeights = layers[layer];
+		for (size_t neuron = 0; neuron < numNeurons; neuron++) {
+			fwrite(weights[layer][neuron], sizeof(double), numWeights, outputFile);
+		}
+	}
+	fclose(outputFile);
 
 	// Free Training Input and Output Arrays
 	for (size_t example = 0; example < NUM_EXAMPLES; example++) {
