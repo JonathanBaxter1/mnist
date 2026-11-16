@@ -11,10 +11,34 @@
 #define NUM_INPUTS 784
 #define NUM_OUTPUTS 10
 const size_t layers[NUM_LAYERS] = {NUM_INPUTS, 128, 64, NUM_OUTPUTS};
-#define LEARNING_RATE 0.05
+#define LEARNING_RATE 0.5
 #define NUM_EPOCHS 30
 
 /* ------------------- Helper Functions ------------------- */
+
+// Set array of doubles to 0.0
+void clearParameters(double parameters[], size_t numParameters)
+{
+	for (size_t i = 0; i < numParameters; i++) {
+		parameters[i] = 0.0;
+	}
+}
+
+// Set gradient elements to 0.0
+void resetGradients(double **biasGradients, double ***weightGradients)
+{
+	for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {
+		size_t numNeurons = layers[layer + 1];
+		clearParameters(biasGradients[layer], numNeurons);
+	}
+	for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {
+		size_t numNeurons = layers[layer + 1];
+		size_t numWeights = layers[layer];
+		for (size_t neuron = 0; neuron < numNeurons; neuron++) {
+			clearParameters(weightGradients[layer][neuron], numWeights);
+		}
+	}
+}
 
 // Use Xavier Initilization on Weights
 void initWeightsXavier(double *weights, size_t numWeights, size_t fanIn, size_t fanOut)
@@ -41,28 +65,124 @@ void adjustParameters(double parameters[], double gradients[], size_t numParamet
 	}
 }
 
-// Set array of doubles to 0.0
-void clearParameters(double parameters[], size_t numParameters)
-{
-	for (size_t i = 0; i < numParameters; i++) {
-		parameters[i] = 0.0;
-	}
-}
-
 // Perform sigmoid activation function
 double sigmoid(double inputs[], double weights[], double bias, size_t numInputs)
 {
 	double sum = 0;
-	for (size_t i = 0; i < numInputs; i++) {
+	double sum1 = 0;
+	double sum2 = 0;
+	double sum3 = 0;
+	for (size_t i = 0; i < numInputs; i+=8) {
 		sum += weights[i]*inputs[i];
+		sum1 += weights[i+1]*inputs[i+1];
+		sum2 += weights[i+2]*inputs[i+2];
+		sum3 += weights[i+3]*inputs[i+3];
 	}
+	sum += sum1 + sum2 + sum3;
+
 	return 1.0/(1.0 + exp(-(sum + bias)));
 }
+
+// Calculate Activations
+void calculateActivations(double **activations, double **biases, double ***weights)
+{
+	for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {
+		size_t numNeurons = layers[layer + 1];
+		size_t numWeights = layers[layer];
+		for (size_t neuron = 0; neuron < numNeurons; neuron++) {
+			double activation = sigmoid(activations[layer], weights[layer][neuron], biases[layer][neuron], numWeights);
+			activations[layer + 1][neuron] = activation;
+		}
+	}
+}
+
+// For calculating accuracy
+bool checkOutput(double **activations, double **trainingOutputs, size_t imageIndex)
+{
+	uint32_t correctNum = 0;
+	uint32_t predictedNum = 0;
+	double maxConfidence = 0.0;
+	for (size_t i = 0; i < NUM_OUTPUTS; i++) {
+		if (trainingOutputs[imageIndex][i] == 1.0) {
+			correctNum = i;
+			break;
+		}
+	}
+	for (size_t i = 0; i < NUM_OUTPUTS; i++) {
+		double confidence = activations[NUM_LAYERS-1][i];
+		if (confidence > maxConfidence) {
+			maxConfidence = confidence;
+			predictedNum = i;
+		}
+	}
+	return predictedNum == correctNum;
+}
+
+// Calculate Cost Gradient (Backpropagation)
+double backpropogate(double **activations, double **dCdAs, double ***weights, double **biasGradients, double ***weightGradients, double **trainingOutputs, size_t imageIndex)
+{
+	double cost = 0.0;
+	for (size_t layer = NUM_LAYERS-1; layer > 0; layer--) {
+		size_t numNeurons = layers[layer];
+		size_t numWeights = layers[layer-1];
+		for (size_t neuron = 0; neuron < numNeurons; neuron++) {
+			double dCdA;
+			if (layer == NUM_LAYERS-1) {
+				double activation = activations[layer][neuron];
+				double goal = trainingOutputs[imageIndex][neuron];
+				double diff = activation - goal;
+				dCdA = 2.0*diff;
+				cost += diff*diff;
+			} else {
+				dCdA = 0.0;
+				size_t numConnections = layers[layer+1];
+				for (size_t i = 0; i < numConnections; i++) {
+					double activation = activations[layer+1][i];
+					double dZdAm1 = weights[layer][i][neuron];
+					double dAdZ = activation*(1 - activation);
+					double dCdAold = dCdAs[layer+1][i];
+					dCdA += dZdAm1*dAdZ*dCdAold;
+				}
+			}
+			dCdAs[layer][neuron] = dCdA;
+			double activation = activations[layer][neuron];
+			double dAdZ = activation*(1 - activation);
+			double dZdB = 1.0;
+			double dCdB = dCdA*dAdZ*dZdB;
+			biasGradients[layer-1][neuron] += dCdB;
+			for (size_t i = 0; i < numWeights; i++) {
+				double lastActivation = activations[layer-1][i];
+				double dZdW = lastActivation;
+				double dCdW = dCdA*dAdZ*dZdW;
+				weightGradients[layer-1][neuron][i] += dCdW;
+			}
+		}
+	}
+	return cost;
+}
+
+void adjustAllParameters(double **biases, double **biasGradients, double ***weights, double ***weightGradients)
+{
+	for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {
+		size_t numNeurons = layers[layer + 1];
+		size_t numWeights = layers[layer];
+		adjustParameters(biases[layer], biasGradients[layer], numNeurons);
+		for (size_t neuron = 0; neuron < numNeurons; neuron++) {
+			adjustParameters(weights[layer][neuron], weightGradients[layer][neuron], numWeights);
+		}
+	}
+}
+
 
 /* ------------------- Main ------------------- */
 
 int main()
 {
+	// Check Layers
+	for (size_t i = 0; i < NUM_LAYERS-1; i++) {
+		if (layers[i]%4 != 0) error("All layers execpt output must have multiple of 4 neurons");
+	}
+
 	// Import Training/Test Data
 	FILE *trainingImages = fopen("train-images-idx3-ubyte", "rb");
 	FILE *trainingLabels = fopen("train-labels-idx1-ubyte", "rb");
@@ -173,23 +293,13 @@ int main()
 
 	// Training Loop
 	for (size_t epoch = 0; epoch < NUM_EPOCHS; epoch++) {
+
+	double cost = 0.0;
+	uint32_t numCorrect = 0;
+
 	for (size_t batch = 0; batch < BATCHES_PER_EPOCH; batch++) {
 
-		// Reset Gradients to 0.0
-		for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {
-			size_t numNeurons = layers[layer + 1];
-			clearParameters(biasGradients[layer], numNeurons);
-		}
-		for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {
-			size_t numNeurons = layers[layer + 1];
-			size_t numWeights = layers[layer];
-			for (size_t neuron = 0; neuron < numNeurons; neuron++) {
-				clearParameters(weightGradients[layer][neuron], numWeights);
-			}
-		}
-
-		double cost = 0.0;
-		uint32_t numCorrect = 0;
+		resetGradients(biasGradients, weightGradients);
 
 		// Iterate through training examples
 		for (size_t exampleNum = 0; exampleNum < BATCH_SIZE; exampleNum++) {
@@ -200,93 +310,25 @@ int main()
 				activations[0][i] = trainingInputs[imageIndex][i];
 			}
 
-			// Calculate Activations
-			for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {
-				size_t numNeurons = layers[layer + 1];
-				size_t numWeights = layers[layer];
-				for (size_t neuron = 0; neuron < numNeurons; neuron++) {
-					double activation = sigmoid(activations[layer], weights[layer][neuron], biases[layer][neuron], numWeights);
-					activations[layer + 1][neuron] = activation;
-				}
-			}
+			// Feedforward
+			calculateActivations(activations, biases, weights);
+			numCorrect += (uint32_t)checkOutput(activations, trainingOutputs, imageIndex);
 
-			// Calculate Accuracy
-			uint32_t correctNum = 0;
-			uint32_t predictedNum = 0;
-			double maxConfidence = 0.0;
-			for (size_t i = 0; i < NUM_OUTPUTS; i++) {
-				if (trainingOutputs[imageIndex][i] == 1.0) {
-					correctNum = i;
-					break;
-				}
-			}
-			for (size_t i = 0; i < NUM_OUTPUTS; i++) {
-				double confidence = activations[NUM_LAYERS-1][i];
-				if (confidence > maxConfidence) {
-					maxConfidence = confidence;
-					predictedNum = i;
-				}
-			}
-			if (predictedNum == correctNum) numCorrect++;
-
-			// Calculate Cost Gradient (Backpropagation)
-			for (size_t layer = NUM_LAYERS-1; layer > 0; layer--) {
-				size_t numNeurons = layers[layer];
-				size_t numWeights = layers[layer-1];
-				for (size_t neuron = 0; neuron < numNeurons; neuron++) {
-					double dCdA;
-					if (layer == NUM_LAYERS-1) {
-						double activation = activations[layer][neuron];
-						double goal = trainingOutputs[imageIndex][neuron];
-						double diff = activation - goal;
-						dCdA = 2.0*diff;
-						cost += diff*diff;
-					} else {
-						dCdA = 0.0;
-						size_t numConnections = layers[layer+1];
-						for (size_t i = 0; i < numConnections; i++) {
-							double activation = activations[layer+1][i];
-							double dZdAm1 = weights[layer][i][neuron];
-							double dAdZ = activation*(1 - activation);
-							double dCdAold = dCdAs[layer+1][i];
-							dCdA += dZdAm1*dAdZ*dCdAold;
-						}
-					}
-					dCdAs[layer][neuron] = dCdA;
-					double activation = activations[layer][neuron];
-					double dAdZ = activation*(1 - activation);
-					double dZdB = 1.0;
-					double dCdB = dCdA*dAdZ*dZdB;
-					biasGradients[layer-1][neuron] += dCdB;
-					for (size_t i = 0; i < numWeights; i++) {
-						double lastActivation = activations[layer-1][i];
-						double dZdW = lastActivation;
-						double dCdW = dCdA*dAdZ*dZdW;
-						weightGradients[layer-1][neuron][i] += dCdW;
-					}
-				}
-			}
-		}
-		cost /= (BATCH_SIZE*NUM_OUTPUTS);
-
-		// Adjust Parameters
-		for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {
-			size_t numNeurons = layers[layer + 1];
-			size_t numWeights = layers[layer];
-			adjustParameters(biases[layer], biasGradients[layer], numNeurons);
-			for (size_t neuron = 0; neuron < numNeurons; neuron++) {
-				adjustParameters(weights[layer][neuron], weightGradients[layer][neuron], numWeights);
-			}
+			// Backpropogate
+			cost += backpropogate(activations, dCdAs, weights, biasGradients, weightGradients, trainingOutputs, imageIndex);
 		}
 
-		double accuracy = (double)numCorrect/BATCH_SIZE*100.0;
-		printf("Batch #%zu | Cost = %f | Accuracy = %.3f%%\n", batch, cost, accuracy);
-		printf("-------------------------------------------------\n");
+		adjustAllParameters(biases, biasGradients, weights, weightGradients);
+
+		if (batch%20 == 0) {
+			printf("-");
+			fflush(stdout);
+		}
 	}
-	printf("+++++++++++++++++++++++++++++++++++++++++++++++++\n");
-	printf("Epoch #%zu\n", epoch);
-	printf("+++++++++++++++++++++++++++++++++++++++++++++++++\n");
-	printf("-------------------------------------------------\n");
+	cost /= (NUM_EXAMPLES*NUM_OUTPUTS);
+	double accuracy = (double)numCorrect/NUM_EXAMPLES*100.0;
+	printf("\n");
+	printf("Epoch #%zu | Cost = %f | Accuracy = %.3f%%\n", epoch, cost, accuracy);
 	}
 
 	// Output Neural Network to File

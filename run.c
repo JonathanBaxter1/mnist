@@ -118,7 +118,7 @@ int main()
 	}
 
 	// Copy inputs to first layer
-	size_t imageIndex = 1;
+	size_t imageIndex = 4;
 	for (size_t i = 0; i < NUM_INPUTS; i++) {
 		activations[0][i] = testInputs[imageIndex][i];
 	}
