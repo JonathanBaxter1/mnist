@@ -118,7 +118,7 @@ int main()
 	}
 
 	// Copy inputs to first layer
-	size_t imageIndex = 0;
+	size_t imageIndex = 1;
 	for (size_t i = 0; i < NUM_INPUTS; i++) {
 		activations[0][i] = testInputs[imageIndex][i];
 	}
@@ -134,25 +134,28 @@ int main()
 	}
 
 	// Display Results
-	char *grayscale = " .:-=+*#%@";
-	for (size_t y = 0; y < 28; y++) {
-		for (size_t x = 0; x < 28; x++) {
-			double pixelValue = activations[0][y*28 + x];
-			char character = grayscale[(size_t)(pixelValue*10.0)];
-			printf("%c%c", character, character);
-		}
-		printf("\n");
-	}
-	printf("\n");
-
 	uint32_t correctNum;
 	for (size_t i = 0; i < NUM_OUTPUTS; i++) {
 		if (testOutputs[imageIndex][i] == 1.0) correctNum = i;
 	}
-	printf("Correct Answer: %d\n", correctNum);
-	printf("Num:\tConfidence\n");
-	for (size_t i = 0; i < NUM_OUTPUTS; i++) {
-		printf("%d:\t%.3f\n", i, activations[numLayers-1][i]);
+
+	char *grayscale = "-.:-=+*#%@";
+	for (size_t y = 0; y < 28; y++) {
+		for (size_t x = 0; x < 28; x++) {
+			double pixelValue = activations[0][y*28 + x];
+			char character = grayscale[(size_t)(pixelValue*9.999)];
+			printf("%c%c", character, character);
+		}
+		if (y == 0) {
+			printf("\tCorrect Answer: %d\n", correctNum);
+		} else if (y == 1) {
+			printf("\tNum:\tConfidence\n");
+		} else if (y-2 < NUM_OUTPUTS) {
+			size_t i = y-2;
+			printf("\t%zu:\t%.3f%%\n", i, 100.0*activations[numLayers-1][i]);
+		} else {
+			printf("\n");
+		}
 	}
 
 	// Free Test Input and Output Arrays
