@@ -12,7 +12,7 @@
 #define NUM_OUTPUTS 10
 const size_t layers[NUM_LAYERS] = {NUM_INPUTS, 128, 64, NUM_OUTPUTS};
 #define LEARNING_RATE 0.05
-#define NUM_EPOCHS 2
+#define NUM_EPOCHS 30
 
 /* ------------------- Helper Functions ------------------- */
 
@@ -70,10 +70,7 @@ int main()
 	FILE *testLabels = fopen("t10k-labels-idx1-ubyte", "rb");
 
 	// Check Files
-	if (trainingImages == NULL || trainingLabels == NULL || testImages == NULL || testLabels == NULL) {
-		printf("Error reading MNIST data\n");
-		exit(-1);
-	}
+	if (trainingImages == NULL || trainingLabels == NULL || testImages == NULL || testLabels == NULL) error("Error reading MNIST data\n");
 
 	// Shuffle Images
 	size_t imageIndices[NUM_EXAMPLES];
