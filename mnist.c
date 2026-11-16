@@ -4,13 +4,15 @@
 #include <math.h>
 
 // Hyperparameters
-#define NUM_EXAMPLES 20
+#define NUM_EXAMPLES 60000
+#define BATCH_SIZE 60
+#define BATCHES_PER_EPOCH NUM_EXAMPLES/BATCH_SIZE
 #define NUM_LAYERS 4
 #define NUM_INPUTS 784
 #define NUM_OUTPUTS 10
 const size_t layers[NUM_LAYERS] = {NUM_INPUTS, 128, 54, NUM_OUTPUTS};
 #define LEARNING_RATE 0.1
-#define NUM_EPOCHS 1000
+#define NUM_EPOCHS 30
 
 /* ------------------- Helper Functions ------------------- */
 
@@ -34,7 +36,7 @@ void error(const char* string)
 void adjustParameters(double parameters[], double gradients[], size_t numParameters)
 {
 	for (size_t i = 0; i < numParameters; i++) {
-		double gradient = gradients[i]/NUM_EXAMPLES;
+		double gradient = gradients[i]/BATCH_SIZE;
 		parameters[i] -= LEARNING_RATE*gradient;
 	}
 }
@@ -73,21 +75,49 @@ int main()
 		exit(-1);
 	}
 
+	// Shuffle Images
+	size_t imageIndices[NUM_EXAMPLES];
+	for (size_t i = 0; i < NUM_EXAMPLES; i++) {
+		imageIndices[i] = i;
+	}
+	for (size_t i = NUM_EXAMPLES-1; i > 0; i--) {
+		size_t randIndex = (size_t)((i + 1)*((double)rand()/(RAND_MAX + 1.0)));
+		size_t tempIndex = imageIndices[i];
+		imageIndices[i] = imageIndices[randIndex];
+		imageIndices[randIndex] = tempIndex;
+	}
+
+
 	// Read Training Images
+	double **trainingInputs = malloc(NUM_EXAMPLES*sizeof(*trainingInputs));
+	double **trainingOutputs = malloc(NUM_EXAMPLES*sizeof(*trainingOutputs));
+	if (trainingInputs == NULL || trainingOutputs == NULL) error("Memory");
+	for (size_t example = 0; example < NUM_EXAMPLES; example++) {
+		trainingInputs[example] = malloc(NUM_INPUTS*sizeof(*trainingInputs[example]));
+		trainingOutputs[example] = malloc(NUM_OUTPUTS*sizeof(*trainingOutputs[example]));
+		if (trainingInputs[example] == NULL || trainingOutputs[example] == NULL) error("Memory");
+		clearParameters(trainingInputs[example], NUM_INPUTS);
+		clearParameters(trainingOutputs[example], NUM_OUTPUTS);
+	}
+
 	uint8_t image[784] = {0};
 	uint8_t imageLabel;
-	double trainingInputs[NUM_EXAMPLES][NUM_INPUTS] = {0.0};
-	double trainingOutputs[NUM_EXAMPLES][NUM_OUTPUTS] = {0.0};
 	for (size_t example = 0; example < NUM_EXAMPLES; example++) {
 		fseek(trainingImages, 16 + 784*example, SEEK_SET);
 		fread(image, 1, 784, trainingImages);
 		fseek(trainingLabels, 8 + example, SEEK_SET);
 		fread(&imageLabel, 1, 1, trainingLabels);
 
-		for (size_t i = 0; i < 784; i++) {
-			trainingInputs[example][i] = (double)image[i]/256.0;
+		for (size_t i = 0; i < NUM_INPUTS; i++) {
+			trainingInputs[example][i] = (double)image[i]/255.0;
 		}
-		trainingOutputs[example][imageLabel] = 1.0;
+		for (size_t i = 0; i < NUM_OUTPUTS; i++) {
+			if (i == imageLabel) {
+				trainingOutputs[example][i] = 1.0;
+			} else {
+				trainingOutputs[example][i] = 0.0;
+			}
+		}
 	}
 
 	// Close Files
@@ -95,6 +125,7 @@ int main()
 	fclose(trainingLabels);
 	fclose(testImages);
 	fclose(testLabels);
+
 
 	// Activations and Activation Gradients
 	double **activations = malloc(NUM_LAYERS*sizeof(*activations));
@@ -145,6 +176,7 @@ int main()
 
 	// Training Loop
 	for (size_t epoch = 0; epoch < NUM_EPOCHS; epoch++) {
+	for (size_t batch = 0; batch < BATCHES_PER_EPOCH; batch++) {
 
 		// Reset Gradients to 0.0
 		for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {
@@ -162,11 +194,12 @@ int main()
 		double cost = 0.0;
 
 		// Iterate through training examples
-		for (size_t exampleNum = 0; exampleNum < NUM_EXAMPLES; exampleNum++) {
+		for (size_t exampleNum = 0; exampleNum < BATCH_SIZE; exampleNum++) {
 
 			// Copy inputs to first layer
+			size_t imageIndex = imageIndices[batch*BATCH_SIZE + exampleNum];
 			for (size_t i = 0; i < NUM_INPUTS; i++) {
-				activations[0][i] = trainingInputs[exampleNum][i];
+				activations[0][i] = trainingInputs[imageIndex][i];
 			}
 
 			// Calculate Activations
@@ -187,7 +220,7 @@ int main()
 					double dCdA;
 					if (layer == NUM_LAYERS-1) {
 						double activation = activations[layer][neuron];
-						double goal = trainingOutputs[exampleNum][neuron];
+						double goal = trainingOutputs[imageIndex][neuron];
 						double diff = activation - goal;
 						dCdA = 2.0*diff;
 						cost += diff*diff;
@@ -217,7 +250,7 @@ int main()
 				}
 			}
 		}
-		cost /= NUM_EXAMPLES;
+		cost /= (BATCH_SIZE*NUM_OUTPUTS);
 
 		// Adjust Parameters
 		for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {
@@ -229,15 +262,28 @@ int main()
 			}
 		}
 
-		printf("Epoch #%zu | cost = %f\n", epoch, cost);
+		printf("Batch #%zu | cost = %f\n", batch, cost);
 		printf("-------------------------------------------------\n");
+	}
+	printf("+++++++++++++++++++++++++++++++++++++++++++++++++\n");
+	printf("Epoch #%zu\n", epoch);
+	printf("+++++++++++++++++++++++++++++++++++++++++++++++++\n");
+	printf("-------------------------------------------------\n");
 	}
 
 	// Print Results
-	printf("Label: %d\n", imageLabel);
+	size_t imageIndex = imageIndices[59999];
 	for (size_t i = 0; i < NUM_OUTPUTS; i++) {
-		printf("%d: %f\n", i, activations[NUM_LAYERS-1][i]);
+		printf("%d: %f, %f\n", i, activations[NUM_LAYERS-1][i], trainingOutputs[imageIndex][i]);
 	}
+
+	// Free Training Input and Output Arrays
+	for (size_t example = 0; example < NUM_EXAMPLES; example++) {
+		free(trainingInputs[example]);
+		free(trainingOutputs[example]);
+	}
+	free(trainingInputs);
+	free(trainingOutputs);
 
 	// Free Activation and Activation Gradient Arrays
 	for (size_t layer = 0; layer < NUM_LAYERS; layer++) {
