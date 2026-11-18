@@ -72,7 +72,7 @@ double sigmoid(double inputs[], double weights[], double bias, size_t numInputs)
 	double sum1 = 0;
 	double sum2 = 0;
 	double sum3 = 0;
-	for (size_t i = 0; i < numInputs; i+=8) {
+	for (size_t i = 0; i < numInputs; i+=4) {
 		sum += weights[i]*inputs[i];
 		sum1 += weights[i+1]*inputs[i+1];
 		sum2 += weights[i+2]*inputs[i+2];
