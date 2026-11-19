@@ -1,12 +1,14 @@
 #include <stdio.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <math.h>
 
 // Hyperparameters
 #define NUM_EXAMPLES 60000
+#define NUM_TEST_EXAMPLES 10000
 #define BATCH_SIZE 60
-#define BATCHES_PER_EPOCH NUM_EXAMPLES/BATCH_SIZE
+#define BATCHES_PER_EPOCH (NUM_EXAMPLES/BATCH_SIZE)
 #define NUM_LAYERS 4
 #define NUM_INPUTS 784
 #define NUM_OUTPUTS 10
@@ -206,33 +208,49 @@ int main()
 
 
 	// Read Training Images
-	double **trainingInputs = malloc(NUM_EXAMPLES*sizeof(*trainingInputs));
+	uint8_t imageLabel;
+	uint8_t **trainingInputs = malloc(NUM_EXAMPLES*sizeof(*trainingInputs));
 	double **trainingOutputs = malloc(NUM_EXAMPLES*sizeof(*trainingOutputs));
 	if (trainingInputs == NULL || trainingOutputs == NULL) error("Memory");
 	for (size_t example = 0; example < NUM_EXAMPLES; example++) {
 		trainingInputs[example] = malloc(NUM_INPUTS*sizeof(*trainingInputs[example]));
 		trainingOutputs[example] = malloc(NUM_OUTPUTS*sizeof(*trainingOutputs[example]));
 		if (trainingInputs[example] == NULL || trainingOutputs[example] == NULL) error("Memory");
-		clearParameters(trainingInputs[example], NUM_INPUTS);
-		clearParameters(trainingOutputs[example], NUM_OUTPUTS);
 	}
-
-	uint8_t image[784] = {0};
-	uint8_t imageLabel;
 	for (size_t example = 0; example < NUM_EXAMPLES; example++) {
 		fseek(trainingImages, 16 + 784*example, SEEK_SET);
-		fread(image, 1, 784, trainingImages);
+		fread(trainingInputs[example], 1, 784, trainingImages);
 		fseek(trainingLabels, 8 + example, SEEK_SET);
 		fread(&imageLabel, 1, 1, trainingLabels);
 
-		for (size_t i = 0; i < NUM_INPUTS; i++) {
-			trainingInputs[example][i] = (double)image[i]/255.0;
-		}
 		for (size_t i = 0; i < NUM_OUTPUTS; i++) {
 			if (i == imageLabel) {
 				trainingOutputs[example][i] = 1.0;
 			} else {
 				trainingOutputs[example][i] = 0.0;
+			}
+		}
+	}
+	// Read Test Images
+	uint8_t **testInputs = malloc(NUM_EXAMPLES*sizeof(*testInputs));
+	double **testOutputs = malloc(NUM_EXAMPLES*sizeof(*testOutputs));
+	if (testInputs == NULL || testOutputs == NULL) error("Memory");
+	for (size_t example = 0; example < NUM_EXAMPLES; example++) {
+		testInputs[example] = malloc(NUM_INPUTS*sizeof(*testInputs[example]));
+		testOutputs[example] = malloc(NUM_OUTPUTS*sizeof(*testOutputs[example]));
+		if (testInputs[example] == NULL || testOutputs[example] == NULL) error("Memory");
+	}
+	for (size_t example = 0; example < NUM_EXAMPLES; example++) {
+		fseek(testImages, 16 + 784*example, SEEK_SET);
+		fread(testInputs[example], 1, 784, testImages);
+		fseek(testLabels, 8 + example, SEEK_SET);
+		fread(&imageLabel, 1, 1, testLabels);
+
+		for (size_t i = 0; i < NUM_OUTPUTS; i++) {
+			if (i == imageLabel) {
+				testOutputs[example][i] = 1.0;
+			} else {
+				testOutputs[example][i] = 0.0;
 			}
 		}
 	}
@@ -294,41 +312,53 @@ int main()
 	// Training Loop
 	for (size_t epoch = 0; epoch < NUM_EPOCHS; epoch++) {
 
-	double cost = 0.0;
-	uint32_t numCorrect = 0;
+		double cost = 0.0;
+		uint32_t numCorrect = 0;
 
-	for (size_t batch = 0; batch < BATCHES_PER_EPOCH; batch++) {
+		for (size_t batch = 0; batch < BATCHES_PER_EPOCH; batch++) {
 
-		resetGradients(biasGradients, weightGradients);
+			resetGradients(biasGradients, weightGradients);
 
-		// Iterate through training examples
-		for (size_t exampleNum = 0; exampleNum < BATCH_SIZE; exampleNum++) {
+			// Iterate through training examples
+			for (size_t exampleNum = 0; exampleNum < BATCH_SIZE; exampleNum++) {
 
+				// Copy inputs to first layer
+				size_t imageIndex = imageIndices[batch*BATCH_SIZE + exampleNum];
+				for (size_t i = 0; i < NUM_INPUTS; i++) {
+					activations[0][i] = (double)trainingInputs[imageIndex][i]/255.0;
+				}
+
+				// Feedforward
+				calculateActivations(activations, biases, weights);
+
+				// Backpropogate
+				cost += backpropogate(activations, dCdAs, weights, biasGradients, weightGradients, trainingOutputs, imageIndex);
+			}
+
+			adjustAllParameters(biases, biasGradients, weights, weightGradients);
+
+			if (batch%20 == 0) {
+				printf("-");
+				fflush(stdout);
+			}
+		}
+
+		// Find Accuracy for Test Examples
+		for (size_t exampleNum = 0; exampleNum < NUM_TEST_EXAMPLES; exampleNum++) {
 			// Copy inputs to first layer
-			size_t imageIndex = imageIndices[batch*BATCH_SIZE + exampleNum];
 			for (size_t i = 0; i < NUM_INPUTS; i++) {
-				activations[0][i] = trainingInputs[imageIndex][i];
+				activations[0][i] = (double)testInputs[exampleNum][i]/255.0;
 			}
 
 			// Feedforward
 			calculateActivations(activations, biases, weights);
-			numCorrect += (uint32_t)checkOutput(activations, trainingOutputs, imageIndex);
-
-			// Backpropogate
-			cost += backpropogate(activations, dCdAs, weights, biasGradients, weightGradients, trainingOutputs, imageIndex);
+			numCorrect += (uint32_t)checkOutput(activations, testOutputs, exampleNum);
 		}
 
-		adjustAllParameters(biases, biasGradients, weights, weightGradients);
-
-		if (batch%20 == 0) {
-			printf("-");
-			fflush(stdout);
-		}
-	}
-	cost /= (NUM_EXAMPLES*NUM_OUTPUTS);
-	double accuracy = (double)numCorrect/NUM_EXAMPLES*100.0;
-	printf("\n");
-	printf("Epoch #%zu | Cost = %f | Accuracy = %.3f%%\n", epoch, cost, accuracy);
+		cost /= (NUM_EXAMPLES*NUM_OUTPUTS);
+		double accuracy = (double)numCorrect/NUM_TEST_EXAMPLES*100.0;
+		printf("\n");
+		printf("Epoch #%zu | Cost = %f | Accuracy = %.3f%%\n", epoch, cost, accuracy);
 	}
 
 	// Output Neural Network to File
