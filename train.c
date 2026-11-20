@@ -9,12 +9,13 @@
 #define NUM_TEST_EXAMPLES 10000
 #define BATCH_SIZE 60
 #define BATCHES_PER_EPOCH (NUM_EXAMPLES/BATCH_SIZE)
+#define RELU_NEGATIVE_SLOPE 0.01
 #define NUM_LAYERS 4
 #define NUM_INPUTS 784
 #define NUM_OUTPUTS 10
 const size_t layers[NUM_LAYERS] = {NUM_INPUTS, 128, 64, NUM_OUTPUTS};
-#define LEARNING_RATE 0.5
-#define NUM_EPOCHS 30
+#define LEARNING_RATE 0.01
+#define NUM_EPOCHS 100
 
 /* ------------------- Helper Functions ------------------- */
 
@@ -67,8 +68,8 @@ void adjustParameters(double parameters[], double gradients[], size_t numParamet
 	}
 }
 
-// Perform sigmoid activation function
-double sigmoid(double inputs[], double weights[], double bias, size_t numInputs)
+// Find weighted sum
+double weightedSum(double inputs[], double weights[], double bias, size_t numInputs)
 {
 	double sum = 0;
 	double sum1 = 0;
@@ -80,9 +81,9 @@ double sigmoid(double inputs[], double weights[], double bias, size_t numInputs)
 		sum2 += weights[i+2]*inputs[i+2];
 		sum3 += weights[i+3]*inputs[i+3];
 	}
-	sum += sum1 + sum2 + sum3;
+	sum += sum1 + sum2 + sum3 + bias;
 
-	return 1.0/(1.0 + exp(-(sum + bias)));
+	return sum;
 }
 
 // Calculate Activations
@@ -92,9 +93,30 @@ void calculateActivations(double **activations, double **biases, double ***weigh
 		size_t numNeurons = layers[layer + 1];
 		size_t numWeights = layers[layer];
 		for (size_t neuron = 0; neuron < numNeurons; neuron++) {
-			double activation = sigmoid(activations[layer], weights[layer][neuron], biases[layer][neuron], numWeights);
+			double z = weightedSum(activations[layer], weights[layer][neuron], biases[layer][neuron], numWeights);
+			double activation;
+			if (layer == NUM_LAYERS-2) {
+				activation = z; // softmax will occur later
+			} else {
+				activation = z > 0 ? z : z*RELU_NEGATIVE_SLOPE;
+			}
 			activations[layer + 1][neuron] = activation;
 		}
+	}
+
+	// Softmax on Output Layer
+	double *out = activations[NUM_LAYERS-1];
+	double max = out[0];
+	for (size_t i = 1; i < NUM_OUTPUTS; i++) {
+		max = out[i] > max ? out[i] : max;
+	}
+	double sum = 0.0;
+	for (size_t i = 0; i < NUM_OUTPUTS; i++) {
+		out[i] = exp(out[i] - max);
+		sum += out[i];
+	}
+	for (size_t i = 0; i < NUM_OUTPUTS; i++) {
+		out[i] /= sum;
 	}
 }
 
@@ -103,7 +125,7 @@ bool checkOutput(double **activations, double **trainingOutputs, size_t imageInd
 {
 	uint32_t correctNum = 0;
 	uint32_t predictedNum = 0;
-	double maxConfidence = 0.0;
+	double maxConfidence = -1.0;
 	for (size_t i = 0; i < NUM_OUTPUTS; i++) {
 		if (trainingOutputs[imageIndex][i] == 1.0) {
 			correctNum = i;
@@ -121,42 +143,32 @@ bool checkOutput(double **activations, double **trainingOutputs, size_t imageInd
 }
 
 // Calculate Cost Gradient (Backpropagation)
-double backpropogate(double **activations, double **dCdAs, double ***weights, double **biasGradients, double ***weightGradients, double **trainingOutputs, size_t imageIndex)
+double backpropogate(double **activations, double **dCdZs, double ***weights, double **biasGradients, double ***weightGradients, double **trainingOutputs, size_t imageIndex)
 {
 	double cost = 0.0;
 	for (size_t layer = NUM_LAYERS-1; layer > 0; layer--) {
 		size_t numNeurons = layers[layer];
 		size_t numWeights = layers[layer-1];
 		for (size_t neuron = 0; neuron < numNeurons; neuron++) {
-			double dCdA;
+			double activation = activations[layer][neuron];
+			double dCdZ;
 			if (layer == NUM_LAYERS-1) {
-				double activation = activations[layer][neuron];
 				double goal = trainingOutputs[imageIndex][neuron];
-				double diff = activation - goal;
-				dCdA = 2.0*diff;
-				cost += diff*diff;
+				dCdZ = activation - goal;
+				if (goal == 1.0) cost -= log(activation + 1e-12);
 			} else {
-				dCdA = 0.0;
+				double dCdA = 0.0;
 				size_t numConnections = layers[layer+1];
 				for (size_t i = 0; i < numConnections; i++) {
-					double activation = activations[layer+1][i];
-					double dZdAm1 = weights[layer][i][neuron];
-					double dAdZ = activation*(1 - activation);
-					double dCdAold = dCdAs[layer+1][i];
-					dCdA += dZdAm1*dAdZ*dCdAold;
+					dCdA += weights[layer][i][neuron]*dCdZs[layer+1][i];
 				}
+				double dAdZ = activation > 0 ? 1 : RELU_NEGATIVE_SLOPE;
+				dCdZ = dCdA*dAdZ;
 			}
-			dCdAs[layer][neuron] = dCdA;
-			double activation = activations[layer][neuron];
-			double dAdZ = activation*(1 - activation);
-			double dZdB = 1.0;
-			double dCdB = dCdA*dAdZ*dZdB;
-			biasGradients[layer-1][neuron] += dCdB;
+			dCdZs[layer][neuron] = dCdZ;
+			biasGradients[layer-1][neuron] += dCdZ;
 			for (size_t i = 0; i < numWeights; i++) {
-				double lastActivation = activations[layer-1][i];
-				double dZdW = lastActivation;
-				double dCdW = dCdA*dAdZ*dZdW;
-				weightGradients[layer-1][neuron][i] += dCdW;
+				weightGradients[layer-1][neuron][i] += dCdZ*activations[layer-1][i];
 			}
 		}
 	}
@@ -175,6 +187,17 @@ void adjustAllParameters(double **biases, double **biasGradients, double ***weig
 	}
 }
 
+void shuffleImages(size_t *imageIndices) {
+	for (size_t i = 0; i < NUM_EXAMPLES; i++) {
+		imageIndices[i] = i;
+	}
+	for (size_t i = NUM_EXAMPLES-1; i > 0; i--) {
+		size_t randIndex = (size_t)((i + 1)*((double)rand()/(RAND_MAX + 1.0)));
+		size_t tempIndex = imageIndices[i];
+		imageIndices[i] = imageIndices[randIndex];
+		imageIndices[randIndex] = tempIndex;
+	}
+}
 
 /* ------------------- Main ------------------- */
 
@@ -196,16 +219,6 @@ int main()
 
 	// Shuffle Images
 	size_t imageIndices[NUM_EXAMPLES];
-	for (size_t i = 0; i < NUM_EXAMPLES; i++) {
-		imageIndices[i] = i;
-	}
-	for (size_t i = NUM_EXAMPLES-1; i > 0; i--) {
-		size_t randIndex = (size_t)((i + 1)*((double)rand()/(RAND_MAX + 1.0)));
-		size_t tempIndex = imageIndices[i];
-		imageIndices[i] = imageIndices[randIndex];
-		imageIndices[randIndex] = tempIndex;
-	}
-
 
 	// Read Training Images
 	uint8_t imageLabel;
@@ -232,15 +245,15 @@ int main()
 		}
 	}
 	// Read Test Images
-	uint8_t **testInputs = malloc(NUM_EXAMPLES*sizeof(*testInputs));
-	double **testOutputs = malloc(NUM_EXAMPLES*sizeof(*testOutputs));
+	uint8_t **testInputs = malloc(NUM_TEST_EXAMPLES*sizeof(*testInputs));
+	double **testOutputs = malloc(NUM_TEST_EXAMPLES*sizeof(*testOutputs));
 	if (testInputs == NULL || testOutputs == NULL) error("Memory");
-	for (size_t example = 0; example < NUM_EXAMPLES; example++) {
+	for (size_t example = 0; example < NUM_TEST_EXAMPLES; example++) {
 		testInputs[example] = malloc(NUM_INPUTS*sizeof(*testInputs[example]));
 		testOutputs[example] = malloc(NUM_OUTPUTS*sizeof(*testOutputs[example]));
 		if (testInputs[example] == NULL || testOutputs[example] == NULL) error("Memory");
 	}
-	for (size_t example = 0; example < NUM_EXAMPLES; example++) {
+	for (size_t example = 0; example < NUM_TEST_EXAMPLES; example++) {
 		fseek(testImages, 16 + 784*example, SEEK_SET);
 		fread(testInputs[example], 1, 784, testImages);
 		fseek(testLabels, 8 + example, SEEK_SET);
@@ -264,15 +277,15 @@ int main()
 
 	// Activations and Activation Gradients
 	double **activations = malloc(NUM_LAYERS*sizeof(*activations));
-	double **dCdAs = malloc(NUM_LAYERS*sizeof(*dCdAs));
-	if (activations == NULL || dCdAs == NULL) error("Memory");
+	double **dCdZs = malloc(NUM_LAYERS*sizeof(*dCdZs));
+	if (activations == NULL || dCdZs == NULL) error("Memory");
 	for (size_t layer = 0; layer < NUM_LAYERS; layer++) {
 		size_t numNeurons = layers[layer];
 		activations[layer] = malloc(numNeurons*sizeof(*activations[layer]));
-		dCdAs[layer] = malloc(numNeurons*sizeof(*dCdAs[layer]));
-		if (activations[layer] == NULL || dCdAs[layer] == NULL) error("Memory");
+		dCdZs[layer] = malloc(numNeurons*sizeof(*dCdZs[layer]));
+		if (activations[layer] == NULL || dCdZs[layer] == NULL) error("Memory");
 		clearParameters(activations[layer], numNeurons);
-		clearParameters(dCdAs[layer], numNeurons);
+		clearParameters(dCdZs[layer], numNeurons);
 	}
 
 	// Biases and Bias Gradients
@@ -315,6 +328,8 @@ int main()
 		double cost = 0.0;
 		uint32_t numCorrect = 0;
 
+		shuffleImages(imageIndices);
+
 		for (size_t batch = 0; batch < BATCHES_PER_EPOCH; batch++) {
 
 			resetGradients(biasGradients, weightGradients);
@@ -332,7 +347,7 @@ int main()
 				calculateActivations(activations, biases, weights);
 
 				// Backpropogate
-				cost += backpropogate(activations, dCdAs, weights, biasGradients, weightGradients, trainingOutputs, imageIndex);
+				cost += backpropogate(activations, dCdZs, weights, biasGradients, weightGradients, trainingOutputs, imageIndex);
 			}
 
 			adjustAllParameters(biases, biasGradients, weights, weightGradients);
@@ -355,7 +370,7 @@ int main()
 			numCorrect += (uint32_t)checkOutput(activations, testOutputs, exampleNum);
 		}
 
-		cost /= (NUM_EXAMPLES*NUM_OUTPUTS);
+		cost /= NUM_EXAMPLES;
 		double accuracy = (double)numCorrect/NUM_TEST_EXAMPLES*100.0;
 		printf("\n");
 		printf("Epoch #%zu | Cost = %f | Accuracy = %.3f%%\n", epoch, cost, accuracy);
@@ -400,10 +415,10 @@ int main()
 	// Free Activation and Activation Gradient Arrays
 	for (size_t layer = 0; layer < NUM_LAYERS; layer++) {
 		free(activations[layer]);
-		free(dCdAs[layer]);
+		free(dCdZs[layer]);
 	}
 	free(activations);
-	free(dCdAs);
+	free(dCdZs);
 
 	// Free Bias and Bias Gradient Arrays
 	for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {

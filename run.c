@@ -6,6 +6,7 @@
 #define NUM_EXAMPLES 10000
 #define NUM_INPUTS 784
 #define NUM_OUTPUTS 10
+#define RELU_NEGATIVE_SLOPE 0.01
 
 /* ------------------- Helper Functions ------------------- */
 
@@ -16,14 +17,56 @@ void error(const char* string)
 	exit(EXIT_FAILURE);
 }
 
-// Perform sigmoid activation function
-double sigmoid(double inputs[], double weights[], double bias, size_t numInputs)
+// Find weighted sum
+double weightedSum(double inputs[], double weights[], double bias, size_t numInputs)
 {
-	double sum = 0;
-	for (size_t i = 0; i < numInputs; i++) {
-		sum += weights[i]*inputs[i];
-	}
-	return 1.0/(1.0 + exp(-(sum + bias)));
+        double sum = 0;
+        double sum1 = 0;
+        double sum2 = 0;
+        double sum3 = 0;
+        for (size_t i = 0; i < numInputs; i+=4) {
+                sum += weights[i]*inputs[i];
+                sum1 += weights[i+1]*inputs[i+1];
+                sum2 += weights[i+2]*inputs[i+2];
+                sum3 += weights[i+3]*inputs[i+3];
+        }
+        sum += sum1 + sum2 + sum3 + bias;
+
+        return sum;
+}
+
+// Calculate Activations
+void calculateActivations(double **activations, double **biases, double ***weights, size_t *layers, size_t numLayers)
+{
+        for (size_t layer = 0; layer < numLayers-1; layer++) {
+                size_t numNeurons = layers[layer + 1];
+                size_t numWeights = layers[layer];
+                for (size_t neuron = 0; neuron < numNeurons; neuron++) {
+                        double z = weightedSum(activations[layer], weights[layer][neuron], biases[layer][neuron], numWeights);
+                        double activation;
+                        if (layer == numLayers-2) {
+                                activation = z; // softmax will occur later
+                        } else {
+                                activation = z > 0 ? z : z*RELU_NEGATIVE_SLOPE;
+                        }
+                        activations[layer + 1][neuron] = activation;
+                }
+        }
+
+        // Softmax on Output Layer
+        double *out = activations[numLayers-1];
+        double max = out[0];
+        for (size_t i = 1; i < NUM_OUTPUTS; i++) {
+                max = out[i] > max ? out[i] : max;
+        }
+        double sum = 0.0;
+        for (size_t i = 0; i < NUM_OUTPUTS; i++) {
+                out[i] = exp(out[i] - max);
+                sum += out[i];
+        }
+        for (size_t i = 0; i < NUM_OUTPUTS; i++) {
+                out[i] /= sum;
+        }
 }
 
 /* ------------------- Main ------------------- */
@@ -124,14 +167,7 @@ int main()
 	}
 
 	// Calculate Activations
-	for (size_t layer = 0; layer < numLayers-1; layer++) {
-		size_t numNeurons = layers[layer + 1];
-		size_t numWeights = layers[layer];
-		for (size_t neuron = 0; neuron < numNeurons; neuron++) {
-			double activation = sigmoid(activations[layer], weights[layer][neuron], biases[layer][neuron], numWeights);
-			activations[layer + 1][neuron] = activation;
-		}
-	}
+	calculateActivations(activations, biases, weights, layers, numLayers);
 
 	// Display Results
 	uint32_t correctNum;
