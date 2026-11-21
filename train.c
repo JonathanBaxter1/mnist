@@ -3,11 +3,13 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <math.h>
+#include <pthread.h>
 
 // Hyperparameters
 #define NUM_EXAMPLES 60000
 #define NUM_TEST_EXAMPLES 10000
-#define BATCH_SIZE 60
+#define MAX_THREADS 16
+#define BATCH_SIZE 75
 #define BATCHES_PER_EPOCH (NUM_EXAMPLES/BATCH_SIZE)
 #define RELU_NEGATIVE_SLOPE 0.01
 #define NUM_LAYERS 4
@@ -15,7 +17,10 @@
 #define NUM_OUTPUTS 10
 const size_t layers[NUM_LAYERS] = {NUM_INPUTS, 128, 64, NUM_OUTPUTS};
 #define LEARNING_RATE 0.01
-#define NUM_EPOCHS 100
+#define NUM_EPOCHS 1
+
+typedef struct {
+} threadArgs;
 
 /* ------------------- Helper Functions ------------------- */
 
@@ -175,6 +180,7 @@ double backpropogate(double **activations, double **dCdZs, double ***weights, do
 	return cost;
 }
 
+// Add gradients to all biases and weights
 void adjustAllParameters(double **biases, double **biasGradients, double ***weights, double ***weightGradients)
 {
 	for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {
@@ -199,10 +205,79 @@ void shuffleImages(size_t *imageIndices) {
 	}
 }
 
+// checks if integer is a power of two
+bool isPowerOfTwo(int num)
+{
+	return (num > 0) && (num & (num - 1)) == 0;
+}
+
+// Train Network (threaded)
+void *train(void *args)
+{
+// Pointers:
+// imageIndices, trainingInputs (change to 1d), trainingOutputs
+// biases, weights
+
+// Per thread arrays
+// activations, dCdZs
+// biasGradients, weightGradients deltas
+
+	threadArgs *data = (threadArgs*)args;
+	for (size_t batch = data->startBatch; batch < data->endBatch; batch++) {
+
+		resetGradients(biasGradients, weightGradients);
+
+		// Iterate through training examples
+		for (size_t exampleNum = 0; exampleNum < BATCH_SIZE; exampleNum++) {
+
+			// Copy inputs to first layer
+			size_t imageIndex = data->imageIndices[batch*BATCH_SIZE + exampleNum];
+			for (size_t i = 0; i < NUM_INPUTS; i++) {
+				activations[0][i] = (double)(data->trainingInputs[imageIndex][i])/255.0;
+			}
+
+			// Feedforward
+			calculateActivations(activations, data->biases, data->weights);
+
+			// Backpropogate
+			cost += backpropogate(activations, dCdZs, data->weights, biasGradients, weightGradients, data->trainingOutputs, imageIndex);
+		}
+
+		adjustAllParameters(data->biases, biasGradients, data->weights, weightGradients);
+
+	}
+}
+
+// Find Accuracy for Test Examples
+void *test(void *args)
+{
+
+// figure this out
+	for (size_t exampleNum = 0; exampleNum < NUM_TEST_EXAMPLES; exampleNum++) {
+		// Copy inputs to first layer
+		for (size_t i = 0; i < NUM_INPUTS; i++) {
+			activations[0][i] = (double)testInputs[exampleNum][i]/255.0;
+		}
+
+		// Feedforward
+		calculateActivations(activations, biases, weights);
+		numCorrect += (uint32_t)checkOutput(activations, testOutputs, exampleNum);
+	}
+}
+
 /* ------------------- Main ------------------- */
 
-int main()
+int main(int argc, char *argv[])
 {
+	if (argc != 2) error("Usage: train num_threads");
+	size_t numThreads = atoi(argv[1]);
+	if (numThreads > MAX_THREADS) error("Max threads exceeded");
+	if (numThreads < 1) error("Thread count must be 1 or greater");
+	if (!isPowerOfTwo(numThreads)) error("Thread count must be power of 2");
+
+	pthread_t thread_ids[numThreads];
+	threadArgs thread_args[numThreads];
+
 	// Check Layers
 	for (size_t i = 0; i < NUM_LAYERS-1; i++) {
 		if (layers[i]%4 != 0) error("All layers execpt output must have multiple of 4 neurons");
@@ -330,44 +405,20 @@ int main()
 
 		shuffleImages(imageIndices);
 
-		for (size_t batch = 0; batch < BATCHES_PER_EPOCH; batch++) {
-
-			resetGradients(biasGradients, weightGradients);
-
-			// Iterate through training examples
-			for (size_t exampleNum = 0; exampleNum < BATCH_SIZE; exampleNum++) {
-
-				// Copy inputs to first layer
-				size_t imageIndex = imageIndices[batch*BATCH_SIZE + exampleNum];
-				for (size_t i = 0; i < NUM_INPUTS; i++) {
-					activations[0][i] = (double)trainingInputs[imageIndex][i]/255.0;
-				}
-
-				// Feedforward
-				calculateActivations(activations, biases, weights);
-
-				// Backpropogate
-				cost += backpropogate(activations, dCdZs, weights, biasGradients, weightGradients, trainingOutputs, imageIndex);
-			}
-
-			adjustAllParameters(biases, biasGradients, weights, weightGradients);
-
-			if (batch%20 == 0) {
-				printf("-");
-				fflush(stdout);
-			}
+		// Train (multi-threaded)
+		for (size_t i = 0; i < numThreads; i++) {
+			pthread_create(&thread_ids[i], NULL, train, (void*)(&thread_args[i]));
+		}
+		for (size_t i = 0; i < numThreads; i++) {
+			pthread_join(thread_ids[i], NULL);
 		}
 
-		// Find Accuracy for Test Examples
-		for (size_t exampleNum = 0; exampleNum < NUM_TEST_EXAMPLES; exampleNum++) {
-			// Copy inputs to first layer
-			for (size_t i = 0; i < NUM_INPUTS; i++) {
-				activations[0][i] = (double)testInputs[exampleNum][i]/255.0;
-			}
-
-			// Feedforward
-			calculateActivations(activations, biases, weights);
-			numCorrect += (uint32_t)checkOutput(activations, testOutputs, exampleNum);
+		// Test (multi-threaded)
+		for (size_t i = 0; i < numThreads; i++) {
+			pthread_create(&thread_ids[i], NULL, test, (void*)(&thread_args[i]));
+		}
+		for (size_t i = 0; i < numThreads; i++) {
+			pthread_join(thread_ids[i], NULL);
 		}
 
 		cost /= NUM_EXAMPLES;
