@@ -2,11 +2,18 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <math.h>
+#include <SDL.h>
 
 #define NUM_EXAMPLES 10000
 #define NUM_INPUTS 784
 #define NUM_OUTPUTS 10
 #define RELU_NEGATIVE_SLOPE 0.01
+#define PATH_SIZE 100
+
+typedef struct {
+	int x;
+	int y;
+} path;
 
 /* ------------------- Helper Functions ------------------- */
 
@@ -73,6 +80,92 @@ void calculateActivations(double **activations, double **biases, double ***weigh
 
 int main()
 {
+
+	// Create SDL Window
+	if (SDL_Init(SDL_INIT_VIDEO) != 0) error ("SDL2 init failed");
+	SDL_Window *window = SDL_CreateWindow("Digits", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, 0);
+	if (window == NULL) error("SDL2 window creation failed");
+	SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_TARGETTEXTURE);
+	if (renderer == NULL) error("SDL2 renderer creation failed");
+
+	bool isMouseDragging = false;
+	int mouseX, mouseY;
+	uint32_t mouseButtons;
+	int drawPadSize = 560;
+	path mousePath[PATH_SIZE] = {0};
+	size_t mousePathIndex = 0;
+	SDL_Rect mouse = {0, 0, 30, 30};
+	SDL_Rect drawPadRect = {0, 0, drawPadSize, drawPadSize};
+	SDL_Event event;
+	SDL_Texture *drawPad = SDL_CreateTexture(
+		renderer,
+		SDL_PIXELFORMAT_RGBA8888,
+		SDL_TEXTUREACCESS_TARGET,
+		drawPadSize, drawPadSize
+	);
+
+	for (size_t frame = 0; frame < 60*10; frame++) {
+
+		while (SDL_PollEvent(&event)) {
+			switch (event.type) {
+				case SDL_QUIT:
+					exit(0);
+					break;
+				case SDL_MOUSEBUTTONDOWN:
+					if (event.button.button == SDL_BUTTON_LEFT) isMouseDragging = true;
+					break;
+				case SDL_MOUSEBUTTONUP:
+					if (event.button.button == SDL_BUTTON_LEFT) isMouseDragging = false;
+					break;
+				default:
+					break;
+			}
+		}
+
+		if (isMouseDragging) {
+			mouseButtons = SDL_GetMouseState(&mouseX, &mouseY);
+			mousePath[mousePathIndex].x = mouseX;
+			mousePath[mousePathIndex].y = mouseY;
+			mousePathIndex = (mousePathIndex + 1)%PATH_SIZE;
+		}
+
+		SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+		SDL_RenderClear(renderer);
+
+		SDL_SetRenderTarget(renderer, drawPad);
+		SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+		SDL_RenderClear(renderer);
+
+		for (size_t i = 0; i < PATH_SIZE-1; i++) {
+			int x1 = mousePath[i].x;
+			int y1 = mousePath[i].y;
+			int x2 = mousePath[i + 1].x;
+			int y2 = mousePath[i + 1].y;
+			float angle = atan2((float)(y2 - y1), (float)(x2 - x1));
+			for (int j = -40; j < 40; j++) {
+				float color = 1.0;
+				if (j < -20) {
+					color = (float)(j + 20)/20.0f;
+				} else if (j > 20) {
+					color = 1.0f - (float)(j - 20)/20.0f;
+				}
+				int colorInt = (int)(color*255.0);
+				SDL_SetRenderDrawColor(renderer, colorInt, colorInt, colorInt, 255);
+				SDL_RenderDrawLine(renderer, x1 + (int)(sin(angle)*j/2.0f), y1 - (int)(cos(angle)*j/2.0f), x2 + (int)(sin(angle)*j/2.0f), y2 - (int)(cos(angle)*j/2.0f));
+			}
+		}
+
+		SDL_SetRenderTarget(renderer, NULL);
+
+		SDL_RenderCopy(renderer, drawPad, NULL, &drawPadRect);
+		SDL_RenderPresent(renderer);
+		SDL_Delay(16);
+	}
+
+	SDL_DestroyRenderer(renderer);
+	SDL_DestroyWindow(window);
+	SDL_Quit();
+
 	// Import Test Data
 	FILE *testImages = fopen("t10k-images-idx3-ubyte", "rb");
 	FILE *testLabels = fopen("t10k-labels-idx1-ubyte", "rb");
