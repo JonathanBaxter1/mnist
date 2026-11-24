@@ -4,16 +4,9 @@
 #include <math.h>
 #include <SDL.h>
 
-#define NUM_EXAMPLES 10000
 #define NUM_INPUTS 784
 #define NUM_OUTPUTS 10
 #define RELU_NEGATIVE_SLOPE 0.01
-#define PATH_SIZE 100
-
-typedef struct {
-	int x;
-	int y;
-} path;
 
 /* ------------------- Helper Functions ------------------- */
 
@@ -76,6 +69,7 @@ void calculateActivations(double **activations, double **biases, double ***weigh
         }
 }
 
+// Draw a solid circle
 void fillCircle(SDL_Renderer* renderer, int x, int y, int radius) {
 	for (int i = x - radius; i < x + radius; i++) {
 		for (int j = y - radius; j < y + radius; j++) {
@@ -89,26 +83,27 @@ void fillCircle(SDL_Renderer* renderer, int x, int y, int radius) {
 	}
 }
 
+// Draw a thick line
 void drawThickLine(SDL_Renderer* renderer, float x1, float y1, float x2, float y2, float thickness, SDL_Color color)
 {
-    float dx = x2 - x1;
-    float dy = y2 - y1;
-    float length = sqrt(dx * dx + dy * dy);
-    if (length == 0.0f) return;
+	float dx = x2 - x1;
+	float dy = y2 - y1;
+	float length = sqrt(dx * dx + dy * dy);
+	if (length == 0.0f) return;
 
-    // Perpendicular unit vector scaled by half thickness
-    float nx = (-dy / length) * (thickness * 0.5f);
-    float ny = (dx / length) * (thickness * 0.5f);
+	// Perpendicular unit vector scaled by half thickness
+	float nx = (-dy / length) * (thickness * 0.5f);
+	float ny = (dx / length) * (thickness * 0.5f);
 
-    SDL_Vertex verts[4] = {
-        { { x1 + nx, y1 + ny }, color, { 0, 0 } },
-        { { x1 - nx, y1 - ny }, color, { 0, 0 } },
-        { { x2 - nx, y2 - ny }, color, { 0, 0 } },
-        { { x2 + nx, y2 + ny }, color, { 0, 0 } }
-    };
+	SDL_Vertex verts[4] = {
+		{{x1 + nx, y1 + ny}, color, {0, 0}},
+		{{x1 - nx, y1 - ny}, color, {0, 0}},
+		{{x2 - nx, y2 - ny}, color, {0, 0}},
+		{{x2 + nx, y2 + ny}, color, {0, 0}},
+	};
 
-    int indices[6] = { 0, 1, 2, 2, 3, 0 };
-    SDL_RenderGeometry(renderer, NULL, verts, 4, indices, 6);
+	int indices[6] = {0, 1, 2, 2, 3, 0};
+	SDL_RenderGeometry(renderer, NULL, verts, 4, indices, 6);
 	fillCircle(renderer, x1, y1, thickness/2.0f);
 	fillCircle(renderer, x2, y2, thickness/2.0f);
 }
@@ -129,13 +124,8 @@ int main()
 	bool isMouseFirstFrame = true;
 	int mouseX, mouseY;
 	int lastMouseX, lastMouseY;
-	uint32_t mouseButtons;
 	int drawPadSize = 560;
-	path mousePath[PATH_SIZE] = {0};
-	size_t mousePathIndex = 0;
-	SDL_Rect mouse = {0, 0, 30, 30};
 	SDL_Rect drawPadRect = {0, 0, drawPadSize, drawPadSize};
-	SDL_Rect mouseRect = {0, 0, 20, 20};
 	SDL_Event event;
 	SDL_Color white = {255, 255, 255, 255};
 	SDL_Texture *drawPad = SDL_CreateTexture(
@@ -155,7 +145,6 @@ int main()
 
 
 	while (sdlRunning) {
-
 		while (SDL_PollEvent(&event)) {
 			switch (event.type) {
 				case SDL_QUIT:
@@ -180,6 +169,7 @@ int main()
 		}
 
 		if (isMouseDragging) {
+			uint32_t mouseButtons;
 			mouseButtons = SDL_GetMouseState(&mouseX, &mouseY);
 			if (isMouseFirstFrame) {
 				lastMouseX = mouseX;
@@ -193,7 +183,6 @@ int main()
 
 			lastMouseX = mouseX;
 			lastMouseY = mouseY;
-			mousePathIndex = (mousePathIndex + 1)%PATH_SIZE;
 		}
 
 		SDL_SetRenderTarget(renderer, NULL);
@@ -201,25 +190,7 @@ int main()
 		SDL_RenderClear(renderer);
 		SDL_RenderCopy(renderer, drawPad, NULL, &drawPadRect);
 		SDL_RenderPresent(renderer);
-		SDL_Delay(16);
 	}
-
-	// Import Test Data
-//	FILE *testImages = fopen("t10k-images-idx3-ubyte", "rb");
-//	FILE *testLabels = fopen("t10k-labels-idx1-ubyte", "rb");
-
-	// Check Files
-//	if (testImages == NULL || testLabels == NULL) error("Error reading MNIST data");
-
-	// Read Test Images
-//	double **testInputs = malloc(NUM_EXAMPLES*sizeof(*testInputs));
-//	double **testOutputs = malloc(NUM_EXAMPLES*sizeof(*testOutputs));
-//	if (testInputs == NULL || testOutputs == NULL) error("Memory");
-//	for (size_t example = 0; example < NUM_EXAMPLES; example++) {
-//		testInputs[example] = malloc(NUM_INPUTS*sizeof(*testInputs[example]));
-//		testOutputs[example] = malloc(NUM_OUTPUTS*sizeof(*testOutputs[example]));
-//		if (testInputs[example] == NULL || testOutputs[example] == NULL) error("Memory");
-//	}
 
 	uint8_t image[784] = {0};
 	uint32_t *drawPadPixels = malloc(drawPadSize*drawPadSize*sizeof(*drawPadPixels));
@@ -233,7 +204,7 @@ int main()
 			for (int by = 0; by < block; by++) {
 				for (int bx = 0; bx < block; bx++) {
 					uint32_t p = drawPadPixels[(y*block + by) * drawPadSize + (x*block + bx)];
-					sum += (p >> 24) & 0xFF; // red channel (image is gray, so any channel works)
+					sum += (p >> 24) & 0xFF;
 				}
 			}
 			image[y*28 + x] = sum/(block*block);
@@ -244,31 +215,8 @@ int main()
 	SDL_DestroyWindow(window);
 	SDL_Quit();
 
-
-//	uint8_t imageLabel;
-//	for (size_t example = 0; example < NUM_EXAMPLES; example++) {
-//		fseek(testImages, 16 + 784*example, SEEK_SET);
-//		fread(image, 1, 784, testImages);
-//		fseek(testLabels, 8 + example, SEEK_SET);
-//		fread(&imageLabel, 1, 1, testLabels);
-
-//		for (size_t i = 0; i < NUM_INPUTS; i++) {
-//			testInputs[example][i] = (double)image[i]/255.0;
-//		}
-//		for (size_t i = 0; i < NUM_OUTPUTS; i++) {
-//			if (i == imageLabel) {
-//				testOutputs[example][i] = 1.0;
-//			} else {
-//				testOutputs[example][i] = 0.0;
-//			}
-//		}
-//	}
-//	fclose(testImages);
-//	fclose(testLabels);
-
+	// Import Model
 	FILE *modelFile = fopen("mnist.nn", "rb");
-
-	// Header
 	uint8_t numLayers;
 	fread(&numLayers, sizeof(uint8_t), 1, modelFile);
 	size_t *layers = malloc(sizeof(size_t)*numLayers);
@@ -315,19 +263,12 @@ int main()
 	}
 
 	// Copy inputs to first layer
-//	size_t imageIndex = 4;
 	for (size_t i = 0; i < NUM_INPUTS; i++) {
 		activations[0][i] = (double)image[i]/255.0;
 	}
 
 	// Calculate Activations
 	calculateActivations(activations, biases, weights, layers, numLayers);
-
-	// Display Results
-//	uint32_t correctNum;
-//	for (size_t i = 0; i < NUM_OUTPUTS; i++) {
-//		if (testOutputs[imageIndex][i] == 1.0) correctNum = i;
-//	}
 
 	// Get prediction from output results
 	double maxValue = 0.0;
@@ -340,6 +281,7 @@ int main()
 		}
 	}
 
+	// Display Results
 	char *grayscale = "-.:-=+*#%@";
 	for (size_t y = 0; y < 28; y++) {
 		for (size_t x = 0; x < 28; x++) {
@@ -358,14 +300,6 @@ int main()
 			printf("\n");
 		}
 	}
-
-	// Free Test Input and Output Arrays
-//	for (size_t example = 0; example < NUM_EXAMPLES; example++) {
-//		free(testInputs[example]);
-//		free(testOutputs[example]);
-//	}
-//	free(testInputs);
-//	free(testOutputs);
 
 	// Free Activation Array
 	for (size_t layer = 0; layer < numLayers; layer++) {
