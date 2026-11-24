@@ -17,9 +17,24 @@
 #define NUM_OUTPUTS 10
 const size_t layers[NUM_LAYERS] = {NUM_INPUTS, 128, 64, NUM_OUTPUTS};
 #define LEARNING_RATE 0.01
-#define NUM_EPOCHS 1
+#define NUM_EPOCHS 10
 
 typedef struct {
+	size_t *imageIndices;
+	uint8_t **trainingInputs;
+	double **trainingOutputs;
+	uint8_t **testInputs;
+	double **testOutputs;
+	double **biases;
+	double ***weights;
+
+	size_t batchStart;
+	size_t batchEnd;
+	size_t testStart;
+	size_t testEnd;
+
+	double cost;
+	uint32_t numCorrect;
 } threadArgs;
 
 /* ------------------- Helper Functions ------------------- */
@@ -214,16 +229,48 @@ bool isPowerOfTwo(int num)
 // Train Network (threaded)
 void *train(void *args)
 {
-// Pointers:
-// imageIndices, trainingInputs (change to 1d), trainingOutputs
-// biases, weights
-
-// Per thread arrays
-// activations, dCdZs
-// biasGradients, weightGradients deltas
-
 	threadArgs *data = (threadArgs*)args;
-	for (size_t batch = data->startBatch; batch < data->endBatch; batch++) {
+
+	// Bias Gradients
+	double **biasGradients = malloc((NUM_LAYERS - 1)*sizeof(*biasGradients));
+	if (biasGradients == NULL) error("Memory");
+	for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {
+		size_t numNeurons = layers[layer + 1];
+		biasGradients[layer] = malloc(numNeurons*sizeof(*biasGradients[layer]));
+		if (biasGradients[layer] == NULL) error("Memory");
+		clearParameters(biasGradients[layer], numNeurons);
+	}
+
+	// Weight Gradients
+	double ***weightGradients = malloc((NUM_LAYERS - 1)*sizeof(*weightGradients));
+	if (weightGradients == NULL) error("Memory");
+	for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {
+		size_t numNeurons = layers[layer + 1];
+		size_t numWeights = layers[layer];
+		weightGradients[layer] = malloc(numNeurons*sizeof(*weightGradients[layer]));
+		if (weightGradients[layer] == NULL) error("Memory");
+		for (size_t neuron = 0; neuron < numNeurons; neuron++) {
+			weightGradients[layer][neuron] = malloc(numWeights*sizeof(*weightGradients[layer][neuron]));
+			if (weightGradients[layer][neuron] == NULL) error("Memory");
+			clearParameters(weightGradients[layer][neuron], numWeights);
+		}
+	}
+
+	// Activations and Activation Gradients
+	double **activations = malloc(NUM_LAYERS*sizeof(*activations));
+	double **dCdZs = malloc(NUM_LAYERS*sizeof(*dCdZs));
+	if (activations == NULL || dCdZs == NULL) error("Memory");
+	for (size_t layer = 0; layer < NUM_LAYERS; layer++) {
+		size_t numNeurons = layers[layer];
+		activations[layer] = malloc(numNeurons*sizeof(*activations[layer]));
+		dCdZs[layer] = malloc(numNeurons*sizeof(*dCdZs[layer]));
+		if (activations[layer] == NULL || dCdZs[layer] == NULL) error("Memory");
+		clearParameters(activations[layer], numNeurons);
+		clearParameters(dCdZs[layer], numNeurons);
+	}
+
+	data->cost = 0.0;
+	for (size_t batch = data->batchStart; batch < data->batchEnd; batch++) {
 
 		resetGradients(biasGradients, weightGradients);
 
@@ -240,29 +287,71 @@ void *train(void *args)
 			calculateActivations(activations, data->biases, data->weights);
 
 			// Backpropogate
-			cost += backpropogate(activations, dCdZs, data->weights, biasGradients, weightGradients, data->trainingOutputs, imageIndex);
+			data->cost += backpropogate(activations, dCdZs, data->weights, biasGradients, weightGradients, data->trainingOutputs, imageIndex);
 		}
 
 		adjustAllParameters(data->biases, biasGradients, data->weights, weightGradients);
 
 	}
+
+	// Free Bias Gradient Arrays
+	for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {
+		free(biasGradients[layer]);
+	}
+	free(biasGradients);
+
+	// Free Weight Gradient Arrays
+	for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {
+		size_t numNeurons = layers[layer + 1];
+		for (size_t neuron = 0; neuron < numNeurons; neuron++) {
+			free(weightGradients[layer][neuron]);
+		}
+		free(weightGradients[layer]);
+	}
+	free(weightGradients);
+
+	// Free Activation and Activation Gradient Arrays
+	for (size_t layer = 0; layer < NUM_LAYERS; layer++) {
+		free(activations[layer]);
+		free(dCdZs[layer]);
+	}
+	free(activations);
+	free(dCdZs);
+
 }
 
 // Find Accuracy for Test Examples
 void *test(void *args)
 {
+	threadArgs *data = (threadArgs*)args;
 
-// figure this out
-	for (size_t exampleNum = 0; exampleNum < NUM_TEST_EXAMPLES; exampleNum++) {
+	// Activations and Activation Gradients
+	double **activations = malloc(NUM_LAYERS*sizeof(*activations));
+	if (activations == NULL) error("Memory");
+	for (size_t layer = 0; layer < NUM_LAYERS; layer++) {
+		size_t numNeurons = layers[layer];
+		activations[layer] = malloc(numNeurons*sizeof(*activations[layer]));
+		if (activations[layer] == NULL) error("Memory");
+		clearParameters(activations[layer], numNeurons);
+	}
+
+	for (size_t exampleNum = data->testStart; exampleNum < data->testEnd; exampleNum++) {
 		// Copy inputs to first layer
 		for (size_t i = 0; i < NUM_INPUTS; i++) {
-			activations[0][i] = (double)testInputs[exampleNum][i]/255.0;
+			activations[0][i] = (double)data->testInputs[exampleNum][i]/255.0;
 		}
 
 		// Feedforward
-		calculateActivations(activations, biases, weights);
-		numCorrect += (uint32_t)checkOutput(activations, testOutputs, exampleNum);
+		calculateActivations(activations, data->biases, data->weights);
+		data->numCorrect += (uint32_t)checkOutput(activations, data->testOutputs, exampleNum);
 	}
+
+	// Free Activation Array
+	for (size_t layer = 0; layer < NUM_LAYERS; layer++) {
+		free(activations[layer]);
+	}
+	free(activations);
+
 }
 
 /* ------------------- Main ------------------- */
@@ -349,52 +438,42 @@ int main(int argc, char *argv[])
 	fclose(testImages);
 	fclose(testLabels);
 
-
-	// Activations and Activation Gradients
-	double **activations = malloc(NUM_LAYERS*sizeof(*activations));
-	double **dCdZs = malloc(NUM_LAYERS*sizeof(*dCdZs));
-	if (activations == NULL || dCdZs == NULL) error("Memory");
-	for (size_t layer = 0; layer < NUM_LAYERS; layer++) {
-		size_t numNeurons = layers[layer];
-		activations[layer] = malloc(numNeurons*sizeof(*activations[layer]));
-		dCdZs[layer] = malloc(numNeurons*sizeof(*dCdZs[layer]));
-		if (activations[layer] == NULL || dCdZs[layer] == NULL) error("Memory");
-		clearParameters(activations[layer], numNeurons);
-		clearParameters(dCdZs[layer], numNeurons);
-	}
-
-	// Biases and Bias Gradients
+	// Biases
 	double **biases = malloc((NUM_LAYERS - 1)*sizeof(*biases));
-	double **biasGradients = malloc((NUM_LAYERS - 1)*sizeof(*biasGradients));
-	if (biases == NULL || biasGradients == NULL) error("Memory");
+	if (biases == NULL) error("Memory");
 	for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {
 		size_t numNeurons = layers[layer + 1];
 		biases[layer] = malloc(numNeurons*sizeof(*biases[layer]));
-		biasGradients[layer] = malloc(numNeurons*sizeof(*biasGradients[layer]));
-		if (biases[layer] == NULL || biasGradients[layer] == NULL) error("Memory");
+		if (biases[layer] == NULL) error("Memory");
 		clearParameters(biases[layer], numNeurons);
-		clearParameters(biasGradients[layer], numNeurons);
 	}
 
-	// Weights and Weight Gradients
+	// Weights
 	double ***weights = malloc((NUM_LAYERS - 1)*sizeof(*weights));
-	double ***weightGradients = malloc((NUM_LAYERS - 1)*sizeof(*weightGradients));
-	if (weights == NULL || weightGradients == NULL) error("Memory");
+	if (weights == NULL) error("Memory");
 	for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {
 		size_t numNeurons = layers[layer + 1];
 		size_t numWeights = layers[layer];
 		weights[layer] = malloc(numNeurons*sizeof(*weights[layer]));
-		weightGradients[layer] = malloc(numNeurons*sizeof(*weightGradients[layer]));
-		if (weights[layer] == NULL || weightGradients[layer] == NULL) error("Memory");
+		if (weights[layer] == NULL) error("Memory");
 		for (size_t neuron = 0; neuron < numNeurons; neuron++) {
 			weights[layer][neuron] = malloc(numWeights*sizeof(*weights[layer][neuron]));
-			weightGradients[layer][neuron] = malloc(numWeights*sizeof(*weightGradients[layer][neuron]));
-			if (weights[layer][neuron] == NULL || weightGradients[layer][neuron] == NULL) error("Memory");
+			if (weights[layer][neuron] == NULL) error("Memory");
 			size_t fanIn = numWeights;
 			size_t fanOut = numNeurons;
 			initWeightsXavier(weights[layer][neuron], numWeights, fanIn, fanOut);
-			clearParameters(weightGradients[layer][neuron], numWeights);
 		}
+	}
+
+	// Initialize Thread Global Args
+	for (size_t i = 0; i < numThreads; i++) {
+		thread_args[i].imageIndices = imageIndices;
+		thread_args[i].trainingInputs = trainingInputs;
+		thread_args[i].trainingOutputs = trainingOutputs;
+		thread_args[i].testInputs = testInputs;
+		thread_args[i].testOutputs = testOutputs;
+		thread_args[i].biases = biases;
+		thread_args[i].weights = weights;
 	}
 
 	// Training Loop
@@ -405,12 +484,23 @@ int main(int argc, char *argv[])
 
 		shuffleImages(imageIndices);
 
+		// Initialize Thread Local Args
+		for (size_t i = 0; i < numThreads; i++) {
+			thread_args[i].batchStart = i*BATCHES_PER_EPOCH/numThreads;
+			thread_args[i].batchEnd = (i+1)*BATCHES_PER_EPOCH/numThreads;
+			thread_args[i].testStart = i*NUM_TEST_EXAMPLES/numThreads;
+			thread_args[i].testEnd = (i+1)*NUM_TEST_EXAMPLES/numThreads;
+			thread_args[i].cost = 0.0;
+			thread_args[i].numCorrect = 0;
+		}
+
 		// Train (multi-threaded)
 		for (size_t i = 0; i < numThreads; i++) {
 			pthread_create(&thread_ids[i], NULL, train, (void*)(&thread_args[i]));
 		}
 		for (size_t i = 0; i < numThreads; i++) {
 			pthread_join(thread_ids[i], NULL);
+			cost += thread_args[i].cost;
 		}
 
 		// Test (multi-threaded)
@@ -419,6 +509,7 @@ int main(int argc, char *argv[])
 		}
 		for (size_t i = 0; i < numThreads; i++) {
 			pthread_join(thread_ids[i], NULL);
+			numCorrect += thread_args[i].numCorrect;
 		}
 
 		cost /= NUM_EXAMPLES;
@@ -463,34 +554,21 @@ int main(int argc, char *argv[])
 	free(trainingInputs);
 	free(trainingOutputs);
 
-	// Free Activation and Activation Gradient Arrays
-	for (size_t layer = 0; layer < NUM_LAYERS; layer++) {
-		free(activations[layer]);
-		free(dCdZs[layer]);
-	}
-	free(activations);
-	free(dCdZs);
-
-	// Free Bias and Bias Gradient Arrays
+	// Free Bias Array
 	for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {
 		free(biases[layer]);
-		free(biasGradients[layer]);
 	}
 	free(biases);
-	free(biasGradients);
 
-	// Free Weight and Weight Gradient Arrays
+	// Free Weight Array
 	for (size_t layer = 0; layer < NUM_LAYERS-1; layer++) {
 		size_t numNeurons = layers[layer + 1];
 		for (size_t neuron = 0; neuron < numNeurons; neuron++) {
 			free(weights[layer][neuron]);
-			free(weightGradients[layer][neuron]);
 		}
 		free(weights[layer]);
-		free(weightGradients[layer]);
 	}
 	free(weights);
-	free(weightGradients);
 
 	return 0;
 }
