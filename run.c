@@ -282,7 +282,7 @@ int main()
 	}
 
 	// Display Results
-	char *grayscale = "-.:-=+*#%@";
+	char *grayscale = " .:-=+*#%@";
 	for (size_t y = 0; y < 28; y++) {
 		for (size_t x = 0; x < 28; x++) {
 			double pixelValue = activations[0][y*28 + x];
