@@ -17,7 +17,7 @@
 #define NUM_OUTPUTS 10
 const size_t layers[NUM_LAYERS] = {NUM_INPUTS, 128, 64, NUM_OUTPUTS};
 #define LEARNING_RATE 0.01
-#define NUM_EPOCHS 10
+#define NUM_EPOCHS 1
 
 typedef struct {
 	size_t *imageIndices;
